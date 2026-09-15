@@ -19,13 +19,6 @@ A command-line calculator written in C that performs basic arithmetic operations
 * C Programming Language
 * Standard C Libraries
 
-## Build and Run
-
-```bash
-gcc calculator.c -o calculator
-./calculator
-```
-
 ## Project Structure
 
 * `in_menu()` – Display calculator menu
