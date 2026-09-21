@@ -17,7 +17,6 @@ A command-line calculator written in C that performs basic arithmetic operations
 ## Technologies
 
 * C Programming Language
-* Standard C Libraries
 
 ## Project Structure
 
