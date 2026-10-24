@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} / ${{ matrix.cc }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cc: gcc
+          - os: ubuntu-latest
+            cc: clang
+          - os: macos-latest
+            cc: clang
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: make CC=${{ matrix.cc }} CFLAGS="-std=c99 -O2 -Wall -Wextra -Wpedantic -Werror"
+
+      - name: Unit tests
+        run: make test CC=${{ matrix.cc }}
+
+      - name: Smoke test (che do mot lenh)
+        run: |
+          test "$(./calc '2 + 3 * 4')" = "14"
+          ! ./calc '1 / 0'
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests with AddressSanitizer + UBSan
+        run: make test CFLAGS="-std=c99 -O1 -g -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer"
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang + wasm-ld
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+      - name: Build WebAssembly
+        run: make wasm
+      - name: Check exports
+        run: |
+          node -e "
+          const fs = require('fs');
+          WebAssembly.instantiate(fs.readFileSync('docs/calc.wasm')).then(({ instance: { exports: x } }) => {
+            const mem = new Uint8Array(x.memory.buffer);
+            mem.set(new TextEncoder().encode('2 + 3 * 4\0'), x.input_buffer());
+            if (x.eval() !== 0 || x.result() !== 14) { console.error('wasm eval failed'); process.exit(1); }
+            console.log('wasm OK');
+          });"

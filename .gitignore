@@ -1,0 +1,9 @@
+calc
+calc.exe
+tests/test_calc
+tests/test_calc.exe
+tests/tmp_history.txt
+calc_history.txt
+*.o
+.vscode/
+.idea/

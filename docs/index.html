@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Máy tính biểu thức — C + WebAssembly</title>
+<meta name="description" content="Máy tính biểu thức viết bằng C, biên dịch sang WebAssembly: Shunting-yard, hàm toán tự cài bằng chuỗi Taylor và Newton-Raphson.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #eef1f5;
+    --panel: #ffffff;
+    --ink: #17202c;
+    --muted: #677385;
+    --line: #dde3ea;
+    --key: #f4f6f9;
+    --key-hover: #e8ecf2;
+    --key-fn: #e7eefb;
+    --key-fn-ink: #2856a6;
+    --key-op: #fdeee3;
+    --key-op-ink: #b2531a;
+    --accent: #e8702a;
+    --accent-ink: #ffffff;
+    --screen: #0f1722;
+    --screen-ink: #e9eef5;
+    --screen-muted: #8392a7;
+    --err: #ff8a80;
+    --ok: #7ee0a8;
+    --shadow: 0 1px 2px rgba(23,32,44,.05), 0 10px 30px rgba(23,32,44,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1219;
+      --panel: #161d27;
+      --ink: #e6ebf2;
+      --muted: #8d99ab;
+      --line: #263142;
+      --key: #1e2734;
+      --key-hover: #263142;
+      --key-fn: #1b2840;
+      --key-fn-ink: #8fb4f2;
+      --key-op: #33241a;
+      --key-op-ink: #f2a571;
+      --screen: #080c12;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  body { font-family: "Be Vietnam Pro", system-ui, sans-serif; background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { margin-bottom: 20px; }
+  h1 { font-size: 26px; letter-spacing: -.02em; }
+  .sub { color: var(--muted); }
+  .sub a { color: var(--accent); }
+  .pill { display: inline-block; font-size: 12px; font-weight: 600; background: var(--key-fn); color: var(--key-fn-ink); padding: 2px 9px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
+
+  .grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+  .calc { padding: 14px; }
+
+  .screen { background: var(--screen); color: var(--screen-ink); border-radius: 12px; padding: 14px 16px 12px; margin-bottom: 12px; }
+  .screen input {
+    width: 100%; background: transparent; border: none; outline: none; color: var(--screen-ink);
+    font-family: "JetBrains Mono", monospace; font-size: 18px; caret-color: var(--accent);
+  }
+  .screen input::placeholder { color: var(--screen-muted); }
+  .out { min-height: 54px; margin-top: 8px; text-align: right; font-family: "JetBrains Mono", monospace; overflow-wrap: anywhere; }
+  .out .value { font-size: 30px; font-weight: 600; }
+  .out .assign { color: var(--screen-muted); font-size: 14px; }
+  .out .err-expr { text-align: left; white-space: pre; font-size: 15px; overflow-x: auto; }
+  .out .err-expr mark { background: var(--err); color: var(--screen); border-radius: 3px; padding: 0 1px; }
+  .out .err-msg { text-align: left; color: var(--err); font-family: "Be Vietnam Pro", sans-serif; font-size: 13.5px; margin-top: 4px; }
+  .out .idle { color: var(--screen-muted); font-size: 13px; font-family: "Be Vietnam Pro", sans-serif; }
+
+  .keys { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+  .keys button {
+    font: inherit; font-family: "JetBrains Mono", monospace; font-size: 16px; font-weight: 500;
+    border: none; border-radius: 10px; padding: 12px 0; cursor: pointer;
+    background: var(--key); color: var(--ink); transition: background .12s, transform .05s;
+  }
+  .keys button:hover { background: var(--key-hover); }
+  .keys button:active { transform: scale(.96); }
+  .keys .fn { background: var(--key-fn); color: var(--key-fn-ink); font-size: 14px; }
+  .keys .op { background: var(--key-op); color: var(--key-op-ink); font-size: 18px; }
+  .keys .eq { background: var(--accent); color: var(--accent-ink); grid-column: span 2; font-weight: 700; }
+  .keys .eq:hover { filter: brightness(1.07); background: var(--accent); }
+
+  .side { display: flex; flex-direction: column; gap: 16px; }
+  .side .card { padding: 14px 16px; }
+  .side h2 { font-size: 15px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .side h2 button { font: inherit; font-size: 12px; font-weight: 500; color: var(--muted); background: none; border: none; cursor: pointer; }
+  .side h2 button:hover { color: var(--accent); }
+
+  .hist { list-style: none; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .hist li button {
+    width: 100%; display: flex; justify-content: space-between; gap: 12px; text-align: left;
+    font: inherit; font-family: "JetBrains Mono", monospace; font-size: 13px; color: var(--ink);
+    background: none; border: none; border-radius: 8px; padding: 6px 8px; cursor: pointer;
+  }
+  .hist li button:hover { background: var(--key); }
+  .hist .e { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist .v { color: var(--muted); white-space: nowrap; }
+  .empty { color: var(--muted); font-size: 13px; }
+
+  .vars { display: flex; flex-wrap: wrap; gap: 6px; }
+  .vars span { font-family: "JetBrains Mono", monospace; font-size: 12.5px; background: var(--key); border-radius: 6px; padding: 3px 8px; }
+
+  .guide { font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
+  .guide code { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--ink); background: var(--key); padding: 1px 5px; border-radius: 4px; cursor: pointer; }
+  .guide code:hover { background: var(--key-hover); }
+  .guide b { color: var(--ink); font-weight: 600; }
+
+  .load-err { padding: 14px; border-radius: 12px; background: var(--key-op); color: var(--key-op-ink); margin-bottom: 16px; }
+  footer { margin-top: 24px; text-align: center; color: var(--muted); font-size: 12.5px; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Máy tính biểu thức <span class="pill">C → WebAssembly</span></h1>
+    <p class="sub">Mọi phép tính chạy bằng chính code C của
+      <a href="https://github.com/khanhdoan4106/Simple-Calculator-by-C" target="_blank" rel="noopener noreferrer">dự án</a>,
+      biên dịch sang WebAssembly <span id="wasmSize"></span> — không dùng <code>Math</code> của JavaScript.</p>
+  </header>
+
+  <div class="load-err" id="loadErr" hidden></div>
+
+  <div class="grid">
+    <section class="card calc">
+      <div class="screen">
+        <input id="expr" type="text" maxlength="255" spellcheck="false" autocomplete="off"
+               placeholder="Nhập biểu thức, ví dụ (1 + 2)^3 / 9" aria-label="Biểu thức">
+        <div class="out" id="out" aria-live="polite"><span class="idle">Bấm Enter hoặc = để tính</span></div>
+      </div>
+      <div class="keys" id="keys">
+        <button class="fn" data-ins="sin(">sin</button>
+        <button class="fn" data-ins="cos(">cos</button>
+        <button class="fn" data-ins="tan(">tan</button>
+        <button class="fn" data-ins="ln(">ln</button>
+        <button class="fn" data-ins="log(">log</button>
+
+        <button class="fn" data-ins="sqrt(">√</button>
+        <button class="fn" data-ins="abs(">abs</button>
+        <button class="fn" data-ins="exp(">exp</button>
+        <button class="fn" data-ins="(">(</button>
+        <button class="fn" data-ins=")">)</button>
+
+        <button data-ins="7">7</button>
+        <button data-ins="8">8</button>
+        <button data-ins="9">9</button>
+        <button class="op" data-ins=" / " aria-label="chia">÷</button>
+        <button class="op" data-ins="^" aria-label="lũy thừa">xʸ</button>
+
+        <button data-ins="4">4</button>
+        <button data-ins="5">5</button>
+        <button data-ins="6">6</button>
+        <button class="op" data-ins=" * " aria-label="nhân">×</button>
+        <button class="op" data-ins="!" aria-label="giai thừa">n!</button>
+
+        <button data-ins="1">1</button>
+        <button data-ins="2">2</button>
+        <button data-ins="3">3</button>
+        <button class="op" data-ins=" - " aria-label="trừ">−</button>
+        <button class="op" data-ins=" % " aria-label="chia lấy dư">mod</button>
+
+        <button data-ins="0">0</button>
+        <button data-ins=".">.</button>
+        <button class="fn" data-ins="pi">π</button>
+        <button class="op" data-ins=" + " aria-label="cộng">+</button>
+        <button class="fn" data-ins="ans">ans</button>
+
+        <button class="fn" data-act="clear" aria-label="xoá hết">C</button>
+        <button class="fn" data-act="back" aria-label="xoá một ký tự">⌫</button>
+        <button class="fn" data-ins="e">e</button>
+        <button class="eq" data-act="eval">=</button>
+      </div>
+    </section>
+
+    <div class="side">
+      <section class="card">
+        <h2>Lịch sử <button type="button" id="clearHist">Xoá</button></h2>
+        <ul class="hist" id="hist"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Biến</h2>
+        <div class="vars" id="vars"></div>
+      </section>
+
+      <section class="card">
+        <h2>Thử nhanh</h2>
+        <div class="guide" id="guide">
+          <div><b>Ưu tiên toán tử:</b> <code>2 + 3 * 4</code> <code>2 ^ 3 ^ 2</code> <code>-2 ^ 2</code></div>
+          <div><b>Hàm &amp; hằng số:</b> <code>sqrt(16) + 5!</code> <code>sin(pi / 6)</code> <code>ln(e ^ 3)</code></div>
+          <div><b>Gán biến:</b> <code>r = 5</code> rồi <code>pi * r ^ 2</code>, <code>ans * 2</code></div>
+          <div><b>Bắt lỗi:</b> <code>1 / 0</code> <code>(2 + 3</code> <code>sqrt(-1)</code> <code>2 3</code></div>
+          <div>Góc lượng giác tính bằng radian. Phím tắt: <b>Enter</b> để tính, <b>Esc</b> để xoá, <b>↑ ↓</b> để duyệt lịch sử.</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer>Mã nguồn: <a href="https://github.com/khanhdoan4106/Simple-Calculator-by-C" target="_blank" rel="noopener noreferrer">khanhdoan4106/Simple-Calculator-by-C</a></footer>
+</div>
+
+<script>
+// Thông báo lỗi tiếng Việt có dấu, theo đúng thứ tự enum CalcError trong src/calc.h
+const ERRORS = [
+  "", "Biểu thức không hợp lệ", "Thiếu hoặc thừa dấu ngoặc", "Biến hoặc hàm không tồn tại",
+  "Không thể chia cho 0", "Không thể chia lấy dư cho 0", "Giá trị nằm ngoài miền xác định",
+  "Kết quả quá lớn (tràn số)", "Biểu thức hoặc tên biến quá dài", "Chưa nhập biểu thức",
+  "Không thể gán giá trị cho tên này", "Đã hết chỗ lưu biến",
+];
+const HIST_KEY = "calc_c_history_v1";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let wasm = null;
+let history = [];
+let browseIndex = -1;
+
+try { history = JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); } catch (e) { history = []; }
+
+function saveHistory() { try { localStorage.setItem(HIST_KEY, JSON.stringify(history.slice(-100))); } catch (e) {} }
+
+// Đọc chuỗi C (kết thúc bằng \0) từ bộ nhớ WebAssembly
+function readCString(ptr) {
+  const mem = new Uint8Array(wasm.memory.buffer);
+  let end = ptr;
+  while (mem[end]) end++;
+  return new TextDecoder().decode(mem.subarray(ptr, end));
+}
+
+// Chuẩn hoá ký hiệu đẹp về ASCII để vị trí lỗi từ C khớp từng ký tự
+function normalize(s) {
+  return s.replace(/×/g, "*").replace(/÷/g, "/").replace(/[−–]/g, "-").replace(/π/g, "pi").replace(/√/g, "sqrt")
+          .replace(/[^\x20-\x7E]/g, "?");
+}
+
+function format(v) {
+  if (Object.is(v, -0)) v = 0;
+  const s = Number(v.toPrecision(12)).toString();
+  return s.replace("e+", "×10^").replace("e-", "×10^-");
+}
+
+function evaluate(raw) {
+  const expr = normalize(raw.trim());
+  const bytes = new TextEncoder().encode(expr);
+  if (bytes.length > wasm.input_capacity() - 1) return { err: 8, pos: -1, expr };
+  const mem = new Uint8Array(wasm.memory.buffer);
+  const ptr = wasm.input_buffer();
+  mem.set(bytes, ptr);
+  mem[ptr + bytes.length] = 0;
+  const err = wasm.eval();
+  return {
+    err, expr,
+    value: wasm.result(),
+    pos: wasm.error_pos(),
+    assigned: readCString(wasm.assigned_name()),
+  };
+}
+
+function showResult(r) {
+  const out = $("out");
+  if (r.err) {
+    let shown = esc(r.expr);
+    if (r.pos >= 0 && r.pos <= r.expr.length) {
+      const ch = r.expr[r.pos] ?? " ";
+      shown = esc(r.expr.slice(0, r.pos)) + "<mark>" + esc(ch) + "</mark>" + esc(r.expr.slice(r.pos + 1));
+    }
+    out.innerHTML = (r.expr ? `<div class="err-expr">${shown}</div>` : "") +
+                    `<div class="err-msg">⚠ ${esc(ERRORS[r.err] || "Lỗi không xác định")}</div>`;
+    return;
+  }
+  out.innerHTML = (r.assigned ? `<div class="assign">${esc(r.assigned)} =</div>` : "") +
+                  `<div class="value">${esc(format(r.value))}</div>`;
+}
+
+function renderHistory() {
+  $("hist").innerHTML = history.length
+    ? history.slice().reverse().map((h, i) =>
+        `<li><button type="button" data-idx="${history.length - 1 - i}" title="Dùng lại biểu thức này">
+          <span class="e">${esc(h.e)}</span><span class="v">= ${esc(format(h.v))}</span></button></li>`).join("")
+    : '<li class="empty">Chưa có phép tính nào.</li>';
+}
+
+function renderVars() {
+  const parts = [`<span>ans = ${esc(format(wasm.ans()))}</span>`];
+  for (let i = 0; i < wasm.var_count(); i++)
+    parts.push(`<span>${esc(readCString(wasm.var_name(i)))} = ${esc(format(wasm.var_value(i)))}</span>`);
+  $("vars").innerHTML = parts.join("");
+}
+
+function run() {
+  if (!wasm) return;
+  const input = $("expr");
+  const r = evaluate(input.value);
+  showResult(r);
+  if (!r.err) {
+    history.push({ e: r.expr, v: r.value });
+    saveHistory();
+    renderHistory();
+    renderVars();
+    input.value = "";
+  }
+  browseIndex = -1;
+  input.focus();
+}
+
+function insertAtCursor(text) {
+  const input = $("expr");
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  const pos = start + text.length;
+  input.setSelectionRange(pos, pos);
+  input.focus();
+}
+
+$("keys").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const input = $("expr");
+  if (btn.dataset.ins) return insertAtCursor(btn.dataset.ins);
+  if (btn.dataset.act === "eval") return run();
+  if (btn.dataset.act === "clear") { input.value = ""; $("out").innerHTML = '<span class="idle">Bấm Enter hoặc = để tính</span>'; input.focus(); }
+  if (btn.dataset.act === "back") {
+    const s = input.selectionStart ?? input.value.length, en = input.selectionEnd ?? s;
+    if (s !== en) input.value = input.value.slice(0, s) + input.value.slice(en);
+    else if (s > 0) { input.value = input.value.slice(0, s - 1) + input.value.slice(s); input.setSelectionRange(s - 1, s - 1); }
+    input.focus();
+  }
+});
+
+$("expr").addEventListener("keydown", (e) => {
+  const input = e.target;
+  if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); run(); }
+  else if (e.key === "Escape") { input.value = ""; }
+  else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    if (!history.length) return;
+    e.preventDefault();
+    if (e.key === "ArrowUp") browseIndex = browseIndex < 0 ? history.length - 1 : Math.max(0, browseIndex - 1);
+    else browseIndex = browseIndex < 0 ? -1 : browseIndex + 1;
+    if (browseIndex >= history.length) browseIndex = -1;
+    input.value = browseIndex < 0 ? "" : history[browseIndex].e;
+  }
+});
+
+$("hist").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-idx]");
+  if (!btn) return;
+  $("expr").value = history[Number(btn.dataset.idx)].e;
+  $("expr").focus();
+});
+
+$("guide").addEventListener("click", (e) => {
+  if (e.target.tagName !== "CODE") return;
+  $("expr").value = e.target.textContent;
+  run();
+});
+
+$("clearHist").addEventListener("click", () => { history = []; saveHistory(); renderHistory(); });
+
+async function loadWasm() {
+  try {
+    const resp = await fetch("calc.wasm");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const bytes = await resp.arrayBuffer();
+    const { instance } = await WebAssembly.instantiate(bytes);
+    wasm = instance.exports;
+    wasm.reset();
+    $("wasmSize").textContent = `(${(bytes.byteLength / 1024).toFixed(1)} KB)`;
+    renderVars();
+  } catch (err) {
+    console.error(err);
+    const local = location.protocol === "file:";
+    $("loadErr").hidden = false;
+    $("loadErr").textContent = local
+      ? "Không tải được calc.wasm khi mở file trực tiếp. Hãy chạy một local server trong thư mục docs/ (ví dụ: python -m http.server) rồi mở http://localhost:8000."
+      : "Không tải được calc.wasm: " + err.message;
+  }
+}
+
+renderHistory();
+loadWasm();
+$("expr").focus();
+</script>
+</body>
+</html>
